@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# Use the whatismybrowser API to get a simple
+# human-readable user-agent string.
+#
+# Use it like this:
+# $ what-user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 15_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Mobile/15E148 Safari/604.1"
+# Safari 15.1 on iOS 15.1
+#
+# Caches lookups so we don't use all our API
+# calls in a month. Clear the cache by rm-ing
+# the $USER_AGENTS file (defaults to ~/.user_agents)
+#
+# MIT licence
+# Copyright 2021 jay@gooby.org http://twitter.com/jaygooby
+set -eu
+
+WHATISMYBROWSER_API_KEY=ABC123XYZ
+USER_AGENTS=~/.user_agents
+
+# check dependencies
+for dependency in curl; do
+  which $dependency > /dev/null || (echo "You need to have '$dependency' installed and in your \$PATH" >&2 && exit 1)
+done
+
+user_agent="${1:-}"
+DEBUG=${DEBUG:-}
+
+debug () {
+  # We || true here because set -eu will exit on the failing test
+  # when DEBUG isn't set
+  [ -n "${DEBUG:-}" ] && echo "${1:-}" >&2 || true
+}
+
+# $1 is the browser supplied user-agent string
+# returns a simplified human readable version
+lookup () {
+  user_agent="${1:-}"
+  debug "Looking up $user_agent"
+  [ -z "$user_agent" ] && exit 1
+  data=$(curl -s -X POST https://api.whatismybrowser.com/api/v2/user_agent_parse --header "X-API-KEY: $WHATISMYBROWSER_API_KEY" --header "Content-Type: application/json" -d "{\"user_agent\": \"$user_agent\" }") 
+  debug "Got $data"
+  # we only want the value of the simple_software_string key from the json blob
+  echo "$data" | grep -Po '"simple_software_string":.*?[^\\]",' | cut -d: -f2 | cut -d'"' -f2
+}
+
+cache_result () {
+  user_agent="${1:-}"
+  simple_string="${2:-}"
+  debug "Caching result: $simple_string for: $user_agent"
+  [ -z "$user_agent" ] && debug "missing \$user_agent" && exit 1
+  grep --no-messages "$user_agent" "$USER_AGENTS" || echo -e "$user_agent\t$simple_string" >> "$USER_AGENTS"
+}
+
+# Is the user-agent in our cached list?
+check_cache() {
+  user_agent="${1:-}"
+  debug "Checking cache $USER_AGENTS for $user_agent"
+  echo "$(grep --no-messages "$user_agent" $USER_AGENTS | cut -d$'\t' -f2)"
+}
+
+simple_string="$(check_cache "$user_agent")"
+
+if [ -z "$simple_string" ]; then
+  debug "Not cached: $user_agent"
+  simple_string="$(lookup "$user_agent")"
+  cache_result "$user_agent" "$simple_string"
+else
+  debug "Found in cache: $simple_string for $user_agent"
+fi
+echo "$simple_string"
